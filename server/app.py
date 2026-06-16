@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import hmac
 import json
@@ -1252,6 +1253,7 @@ def fetch_teacher_info(cookie: str) -> dict[str, Any]:
         headers={
             "Content-Type": "application/json",
             "Cookie": cookie,
+            "Accept-Encoding": "gzip, identity",
             "Origin": "https://tyca.codemao.cn",
             "Referer": "https://tyca.codemao.cn/",
             "User-Agent": "Mozilla/5.0",
@@ -1260,7 +1262,10 @@ def fetch_teacher_info(cookie: str) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(request, timeout=12) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            raw_body = response.read()
+            if response.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw_body = gzip.decompress(raw_body)
+            payload = json.loads(raw_body.decode("utf-8"))
     except Exception as exc:
         raise ApiError(HTTPStatus.UNAUTHORIZED, f"扫码登录已完成，但教师身份校验失败：{exc}")
     teachers = payload.get("data") if isinstance(payload, dict) else None

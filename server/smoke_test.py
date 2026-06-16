@@ -105,6 +105,9 @@ def main() -> None:
         )["run"]
         assert submitted["status"] == "submitted"
         assert submitted["submit"]["created"]
+        app_source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
+        assert ".codex/skills" not in app_source
+        assert "pipeline.py" not in app_source
         print("smoke test passed")
     finally:
         server.shutdown()

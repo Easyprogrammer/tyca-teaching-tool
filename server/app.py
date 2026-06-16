@@ -599,21 +599,14 @@ class TycaClient:
         markdown_path.write_text(run["markdown"], encoding="utf-8")
         adapter_path = tyca_dir / "tyca-adapter.json"
         adapter = run.get("adapter") or build_choice_adapter(run)
+        validation = validate_adapter_for_ui(adapter)
+        if not validation.get("ok"):
+            errors = validation.get("errors") or []
+            raise ApiError(
+                HTTPStatus.BAD_REQUEST,
+                "adapter validation failed: " + "；".join(str(error) for error in errors[:5]),
+            )
         adapter_path.write_text(json.dumps(adapter, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        validate_result = self.run_command(
-            [
-                "python3",
-                os.path.expanduser("~/.codex/skills/tyca-question-pipeline/scripts/pipeline.py"),
-                "validate",
-                "--adapter-json",
-                str(adapter_path),
-            ],
-            cwd=Path.cwd(),
-            timeout=30,
-        )
-        if validate_result.returncode != 0:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "adapter validation failed: " + sanitize_output(validate_result.stderr))
 
         output_path = tyca_dir / ("upload-result.json" if submit else "dry-run-result.json")
         cookie_path = tyca_dir / "teacher-cookie.txt"

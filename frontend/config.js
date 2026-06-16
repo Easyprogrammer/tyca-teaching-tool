@@ -1,3 +1,3 @@
 window.TYCA_TOOL_CONFIG = {
-  apiBase: "http://127.0.0.1:8787"
+  apiBase: "http://47.106.167.94:8787"
 };

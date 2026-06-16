@@ -1,6 +1,8 @@
 const state = {
   token: localStorage.getItem("tyca_token") || "",
   currentRun: null,
+  qrToken: "",
+  qrTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -35,14 +37,67 @@ function setSession(text) {
   $("sessionStatus").textContent = text;
 }
 
-async function login() {
-  const payload = await api("/api/login", {
-    method: "POST",
-    body: JSON.stringify({ email: $("email").value, password: $("password").value }),
-  });
+async function startQrLogin() {
+  stopQrPolling();
+  $("qrStatus").textContent = "正在生成钉钉二维码...";
+  $("startQrLoginBtn").disabled = true;
+  const payload = await api("/api/qrcode-login/start", { method: "POST" });
+  state.qrToken = payload.qrcodeToken;
+  $("qrBox").innerHTML = `<img alt="钉钉登录二维码" src="data:image/png;base64,${payload.qrcode}" />`;
+  $("qrStatus").textContent = "请用钉钉扫码确认登录。";
+  $("cancelQrLoginBtn").disabled = false;
+  state.qrTimer = window.setInterval(checkQrLogin, 1200);
+}
+
+async function checkQrLogin() {
+  if (!state.qrToken) return;
+  const payload = await api(`/api/qrcode-login/status?token=${encodeURIComponent(state.qrToken)}`);
+  if (payload.status === "pending") {
+    $("qrStatus").textContent = "等待扫码确认...";
+    return;
+  }
+  if (payload.status === "done") {
+    stopQrPolling();
+    state.qrToken = "";
+    $("startQrLoginBtn").disabled = false;
+    $("cancelQrLoginBtn").disabled = true;
+    $("qrStatus").textContent = `登录成功：${payload.teacher?.name || payload.user.email}`;
+    $("qrBox").innerHTML = "<span>已登录</span>";
+    finishLogin(payload);
+    return;
+  }
+  stopQrPolling();
+  $("startQrLoginBtn").disabled = false;
+  $("cancelQrLoginBtn").disabled = true;
+  $("qrStatus").textContent = payload.error || "二维码已失效，请重新扫码。";
+}
+
+async function cancelQrLogin() {
+  if (state.qrToken) {
+    await api("/api/qrcode-login/cancel", {
+      method: "POST",
+      body: JSON.stringify({ token: state.qrToken }),
+    });
+  }
+  stopQrPolling();
+  state.qrToken = "";
+  $("qrBox").innerHTML = "<span>未生成二维码</span>";
+  $("qrStatus").textContent = "已取消扫码登录。";
+  $("startQrLoginBtn").disabled = false;
+  $("cancelQrLoginBtn").disabled = true;
+}
+
+function stopQrPolling() {
+  if (state.qrTimer) {
+    window.clearInterval(state.qrTimer);
+    state.qrTimer = null;
+  }
+}
+
+async function finishLogin(payload) {
   state.token = payload.token;
   localStorage.setItem("tyca_token", state.token);
-  setSession(`已登录：${payload.user.email}`);
+  setSession(`已登录：${payload.teacher?.name || payload.user.email}`);
   await loadMe();
   await loadHistory();
 }
@@ -232,7 +287,8 @@ function bind(id, handler) {
   });
 }
 
-bind("loginBtn", login);
+bind("startQrLoginBtn", startQrLogin);
+bind("cancelQrLoginBtn", cancelQrLogin);
 bind("saveCookieBtn", saveCookie);
 bind("uploadBtn", uploadMarkdown);
 bind("saveAdapterBtn", saveAdapter);

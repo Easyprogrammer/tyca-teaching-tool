@@ -5,17 +5,21 @@ import hashlib
 import hmac
 import json
 import os
+import queue
 import re
 import secrets
 import sqlite3
 import subprocess
+import threading
 import time
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+import urllib.request
 
 
 QUESTION_RE = re.compile(r"(?m)^\s*(?:#{1,4}\s*)?(?:题目|Question)?\s*(\d+)[\.、:\)]\s*(.+)$")
@@ -24,6 +28,9 @@ CODE_FENCE_RE = re.compile(r"```")
 OPTION_RE = re.compile(r"(?m)^\s*([A-D])[\.、\)]\s*(.+)$")
 COOKIE_ASSIGNMENT_RE = re.compile(r"(?i)(cookie|session|token|authorization)([=:])([^;\\s]+)")
 SECTION_RE = re.compile(r"(?m)^(#{1,5})\s*(.+?)\s*$")
+CRM_API = "https://api-live-class-crm.codemao.cn"
+TYCA_LOGIN_URL = "https://internal-account.codemao.cn/login?redirect=https%3A%2F%2Ftyca.codemao.cn%2F"
+QRCODE_TIMEOUT_SECONDS = 5 * 60
 
 
 def load_env_file(path: Path) -> None:
@@ -230,6 +237,37 @@ class Store:
                 (hash_token(token), row["id"], created, created + 86400 * 7),
             )
             return {"token": token, "user": public_user(row)}
+
+    def create_session_for_user(self, user_id: int) -> str:
+        token = secrets.token_urlsafe(32)
+        created = now()
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO sessions(token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                (hash_token(token), user_id, created, created + 86400 * 7),
+            )
+        return token
+
+    def find_or_create_teacher_user(self, teacher: dict[str, Any], cookie: str) -> sqlite3.Row:
+        teacher_id = str(teacher.get("id") or "unknown")
+        email = f"dingtalk-{teacher_id}@teacher.local"
+        encrypted = self.encrypt_cookie(cookie.strip())
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE users SET tyca_cookie_encrypted = ?, tyca_cookie_updated_at = ? WHERE id = ?",
+                    (encrypted, now(), row["id"]),
+                )
+                return conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+            cur = conn.execute(
+                """
+                INSERT INTO users(email, password_hash, tyca_cookie_encrypted, tyca_cookie_updated_at, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (email, self.hash_password(secrets.token_urlsafe(32)), encrypted, now(), now()),
+            )
+            return conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
 
     def auth_user(self, token: str | None) -> sqlite3.Row:
         if not token:
@@ -521,6 +559,115 @@ class TycaClient:
 
     def run_command(self, cmd: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
         return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
+
+
+class QrcodeLoginManager:
+    def __init__(self, store: Store):
+        self.store = store
+        self.sessions: dict[str, dict[str, Any]] = {}
+        self.playwright = None
+        self.browser = None
+        self.tasks: queue.Queue[tuple[Future, Any, tuple[Any, ...]]] = queue.Queue()
+        self.worker = threading.Thread(target=self.worker_loop, daemon=True)
+        self.worker.start()
+
+    def run_on_worker(self, func: Any, *args: Any) -> Any:
+        future: Future = Future()
+        self.tasks.put((future, func, args))
+        try:
+            return future.result(timeout=30)
+        except FutureTimeoutError:
+            raise ApiError(HTTPStatus.REQUEST_TIMEOUT, "扫码服务响应超时，请重试")
+
+    def worker_loop(self) -> None:
+        while True:
+            future, func, args = self.tasks.get()
+            if future.set_running_or_notify_cancel():
+                try:
+                    future.set_result(func(*args))
+                except Exception as exc:
+                    future.set_exception(exc)
+
+    def start(self) -> dict[str, Any]:
+        return self.run_on_worker(self._start)
+
+    def status(self, token: str) -> dict[str, Any]:
+        return self.run_on_worker(self._status, token)
+
+    def cancel(self, token: str) -> dict[str, Any]:
+        return self.run_on_worker(self._cancel, token)
+
+    def _start(self) -> dict[str, Any]:
+        token = secrets.token_urlsafe(24)
+        browser = self.shared_browser()
+        context = browser.new_context(viewport={"width": 420, "height": 560})
+        page = context.new_page()
+        page.goto(TYCA_LOGIN_URL, wait_until="domcontentloaded", timeout=20000)
+        qrcode = self.screenshot_qrcode(page)
+        self.sessions[token] = {"context": context, "page": page, "started_at": now()}
+        return {"qrcodeToken": token, "qrcode": qrcode, "expiresIn": QRCODE_TIMEOUT_SECONDS}
+
+    def _status(self, token: str) -> dict[str, Any]:
+        state = self.sessions.get(token)
+        if not state:
+            return {"status": "idle"}
+        if now() - int(state["started_at"]) > QRCODE_TIMEOUT_SECONDS:
+            self.cleanup(token)
+            return {"status": "expired", "error": "二维码已过期，请重新扫码"}
+
+        cookie = self.cookie_string(state["context"])
+        if "internal_account_token" not in cookie:
+            return {"status": "pending"}
+
+        teacher = fetch_teacher_info(cookie)
+        user = self.store.find_or_create_teacher_user(teacher, cookie)
+        session_token = self.store.create_session_for_user(int(user["id"]))
+        self.cleanup(token)
+        return {
+            "status": "done",
+            "token": session_token,
+            "user": public_user(user),
+            "teacher": teacher,
+            "cookie": self.store.get_cookie_status(int(user["id"])),
+        }
+
+    def _cancel(self, token: str) -> dict[str, Any]:
+        self.cleanup(token)
+        return {"ok": True}
+
+    def shared_browser(self) -> Any:
+        if self.browser and self.browser.is_connected():
+            return self.browser
+        try:
+            from playwright.sync_api import sync_playwright
+        except Exception as exc:
+            raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, f"Playwright is not installed: {exc}")
+        if not self.playwright:
+            self.playwright = sync_playwright().start()
+        self.browser = self.playwright.chromium.launch(headless=True, args=["--headless=new"])
+        return self.browser
+
+    def screenshot_qrcode(self, page: Any) -> str:
+        try:
+            frame = page.locator('iframe[src*="login.dingtalk.com"]')
+            frame.wait_for(timeout=10000)
+            box = frame.bounding_box()
+            image = page.screenshot(type="png", clip=box if box else None)
+        except Exception:
+            image = page.screenshot(type="png")
+        return base64.b64encode(image).decode("ascii")
+
+    def cookie_string(self, context: Any) -> str:
+        return "; ".join(f"{item['name']}={item['value']}" for item in context.cookies())
+
+    def cleanup(self, token: str) -> None:
+        state = self.sessions.pop(token, None)
+        if not state:
+            return
+        try:
+            state["context"].close()
+        except Exception:
+            pass
 
 
 def parse_markdown(markdown: str) -> dict[str, Any]:
@@ -1134,6 +1281,35 @@ def public_user(row: sqlite3.Row) -> dict[str, Any]:
     return {"id": row["id"], "email": row["email"]}
 
 
+def fetch_teacher_info(cookie: str) -> dict[str, Any]:
+    body = b"{}"
+    request = urllib.request.Request(
+        f"{CRM_API}/live/teacher/allByAuth",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Cookie": cookie,
+            "Origin": "https://tyca.codemao.cn",
+            "Referer": "https://tyca.codemao.cn/",
+            "User-Agent": "Mozilla/5.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise ApiError(HTTPStatus.UNAUTHORIZED, f"扫码登录已完成，但教师身份校验失败：{exc}")
+    teachers = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(teachers, list) or not teachers:
+        raise ApiError(HTTPStatus.UNAUTHORIZED, "扫码登录已完成，但未获取到教师身份")
+    teacher = next((item for item in teachers if item.get("currentTeacherFlag")), teachers[0])
+    return {
+        "name": teacher.get("teacherName") or "教师",
+        "id": teacher.get("internalTeacherId") or teacher.get("teacherId") or "unknown",
+    }
+
+
 def now() -> int:
     return int(time.time())
 
@@ -1146,6 +1322,7 @@ class ApiHandler(BaseHTTPRequestHandler):
     store: Store
     config: Config
     tyca: TycaClient
+    qrcode: QrcodeLoginManager
 
     def do_OPTIONS(self) -> None:
         self.send_json({"ok": True})
@@ -1169,6 +1346,17 @@ class ApiHandler(BaseHTTPRequestHandler):
             if method == "POST" and path == "/api/login":
                 body = self.read_json()
                 self.send_json(self.store.create_session(str(body.get("email", "")), str(body.get("password", ""))))
+                return
+            if method == "POST" and path == "/api/qrcode-login/start":
+                self.send_json(self.qrcode.start())
+                return
+            if method == "GET" and path == "/api/qrcode-login/status":
+                token = parse_qs(parsed.query).get("token", [""])[0]
+                self.send_json(self.qrcode.status(token))
+                return
+            if method == "POST" and path == "/api/qrcode-login/cancel":
+                body = self.read_json()
+                self.send_json(self.qrcode.cancel(str(body.get("token", ""))))
                 return
 
             user = self.store.auth_user(self.bearer_token())
@@ -1286,6 +1474,7 @@ def create_server(config: Config) -> ThreadingHTTPServer:
     handler.store = store
     handler.config = config
     handler.tyca = TycaClient(config.tyca_mode, config.data_dir, config.tyca_project_dir)
+    handler.qrcode = QrcodeLoginManager(store)
     return ThreadingHTTPServer((config.host, config.port), handler)
 
 

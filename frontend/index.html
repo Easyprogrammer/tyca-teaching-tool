@@ -22,15 +22,16 @@
           API 地址
         <input id="apiBase" data-testid="api-base" value="http://127.0.0.1:8787" />
         </label>
-        <label>
-          邮箱
-        <input id="email" data-testid="email" placeholder="teacher@example.com" autocomplete="username" />
-        </label>
-        <label>
-          密码
-        <input id="password" data-testid="password" type="password" autocomplete="current-password" />
-        </label>
-        <button id="loginBtn" data-testid="login">登录</button>
+        <div class="qr-login">
+          <div class="qr-box" id="qrBox">
+            <span>未生成二维码</span>
+          </div>
+          <p class="hint" id="qrStatus">使用钉钉扫码登录后，服务器会自动保存本教师的 TYCA Cookie。</p>
+          <div class="actions">
+            <button id="startQrLoginBtn" data-testid="start-qr-login">钉钉扫码登录</button>
+            <button id="cancelQrLoginBtn" data-testid="cancel-qr-login" class="secondary" disabled>取消</button>
+          </div>
+        </div>
       </section>
 
       <section class="panel">

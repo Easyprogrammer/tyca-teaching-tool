@@ -104,6 +104,10 @@ button {
   padding: 10px 14px;
 }
 
+.secondary {
+  background: #475569;
+}
+
 button:disabled {
   background: #94a3b8;
   cursor: not-allowed;
@@ -116,6 +120,32 @@ button:disabled {
 .hint {
   color: #64748b;
   margin: 0 0 12px;
+}
+
+.qr-login {
+  display: grid;
+  gap: 12px;
+}
+
+.qr-box {
+  align-items: center;
+  aspect-ratio: 1 / 1;
+  background: #f8fafc;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  color: #64748b;
+  display: flex;
+  justify-content: center;
+  max-width: 260px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.qr-box img {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
 }
 
 .upload-row,

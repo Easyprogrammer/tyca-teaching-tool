@@ -86,6 +86,9 @@ def main() -> None:
         assert application_run["adapter"]
         assert application_run["status"] == "adapter_ready"
         assert application_run["adapterValidation"]["warnings"]
+        assert len(application_run["review"]["items"]) == 1
+        assert len(application_run["review"]["items"][0]["issues"]) == 2
+        assert all("items[" not in issue for issue in application_run["review"]["items"][0]["issues"])
         missing_answer_run = request(
             "POST",
             "/api/runs",
@@ -95,6 +98,11 @@ def main() -> None:
         assert missing_answer_run["adapter"]
         assert missing_answer_run["status"] == "adapter_warning"
         assert missing_answer_run["adapterValidation"]["errors"]
+        assert missing_answer_run["review"]["items"][0]["issues"] == [
+            "选择题缺少正确答案",
+            "选择题第 1 题缺少答案",
+            "knowledgeArr 为空，TYCA 脚本会继续但需要人工确认",
+        ]
         dry = request("POST", f"/api/runs/{run['id']}/dry-run", token=token)["run"]
         assert dry["status"] == "dry_run_passed"
         submitted = request(

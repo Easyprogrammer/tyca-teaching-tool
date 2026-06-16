@@ -920,8 +920,10 @@ def review_from_adapter(adapter: dict[str, Any]) -> dict[str, Any]:
     validation = validate_adapter_for_ui(adapter)
     items = []
     for index, item in enumerate(adapter.get("items") or [], start=1):
+        label = f"items[{index - 1}]"
         payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
         local_type = str(item.get("localType") or "")
+        item_issues = issues_for_label(validation, label)
         items.append(
             {
                 "localId": str(item.get("localId") or f"q{index}"),
@@ -932,11 +934,21 @@ def review_from_adapter(adapter: dict[str, Any]) -> dict[str, Any]:
                 "knowledge": clean_knowledge(payload.get("knowledgeArr")),
                 "difficulty": safe_int(payload.get("difficulty"), 3),
                 "examDifficulty": str(payload.get("examDifficulty") or default_exam_difficulty(local_type)),
-                "status": "ready" if validation["ok"] else "warning",
-                "issues": validation["errors"] + validation["warnings"],
+                "status": "warning" if item_issues else "ready",
+                "issues": item_issues,
             }
         )
     return {"items": items, "warnings": validation["warnings"], "validation": validation}
+
+
+def issues_for_label(validation: dict[str, Any], label: str) -> list[str]:
+    prefix = f"{label} "
+    issues = []
+    for message in list(validation.get("errors") or []) + list(validation.get("warnings") or []):
+        text = str(message)
+        if text.startswith(prefix):
+            issues.append(text[len(prefix):])
+    return issues
 
 
 def answer_summary(item: dict[str, Any]) -> str:

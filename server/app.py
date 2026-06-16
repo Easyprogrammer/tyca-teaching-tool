@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+import urllib.error
 import urllib.request
 
 
@@ -28,6 +29,7 @@ ANSWER_RE = re.compile(r"(?im)^\s*(?:答案|Answer)\s*[:：]\s*(.+)$")
 CODE_FENCE_RE = re.compile(r"```")
 OPTION_RE = re.compile(r"(?m)^\s*([A-D])[\.、\)]\s*(.+)$")
 COOKIE_ASSIGNMENT_RE = re.compile(r"(?i)(cookie|session|token|authorization)([=:])([^;\\s]+)")
+SECRET_VALUE_RE = re.compile(r"sk-[A-Za-z0-9]{16,}")
 SECTION_RE = re.compile(r"(?m)^(#{1,5})\s*(.+?)\s*$")
 CRM_API = "https://api-live-class-crm.codemao.cn"
 TYCA_LOGIN_URL = "https://internal-account.codemao.cn/login?redirect=https%3A%2F%2Ftyca.codemao.cn%2F"
@@ -48,6 +50,50 @@ def load_env_file(path: Path) -> None:
 load_env_file(Path(__file__).with_name(".env"))
 
 
+DEEPSEEK_SYSTEM_PROMPT = """
+你是 TYCA 录题助手的结构化解析器。用户会提供不固定格式的 Markdown 试卷或题目材料。
+
+请只输出 JSON，且 JSON 必须是一个 TYCA adapter 对象：
+{
+  "adapter": "tyca",
+  "version": "tyca-v1",
+  "generatedBy": "deepseek-ai-parser",
+  "items": []
+}
+
+核心要求：
+- 不要假设 Markdown 格式固定；不同老师可能使用任意标题、答案、解析、表格、列表或混排格式。
+- 只能提取原文中明确出现的信息；答案、解析、知识点不确定时留空，并在 payload.generationIssues 写中文说明。
+- 如果只能识别题目原文但无法稳定结构化，也要生成一个不可上传的草稿 item，保留原文到 payload.description，并写 generationIssues。
+- 支持 localType: single_choice, multiple_choice, true_false, reading_program, complete_program, programming。
+- targetGroup 映射：选择/判断题 choice，阅读程序/完善程序 application，编程题 oj。
+- 所有 item 必须有 localId、localType、targetGroup、payload。
+
+选择题/判断题 payload：
+- name, type(单选1/多选2/判断1), syncOj=1, difficulty=3, examDifficulty, contentFormat=1,
+  languageTypes=[1], audioUrl="", knowledgeArr=[], sourceDictList=[],
+  description, analysis, optionsContentType=4, options。
+- options: [{"text": "...", "seq": 0, "isCorrect": true/false, "uuid": "q1-a", "audioUrl": ""}]
+
+阅读程序/完善程序 payload：
+- name, contentFormat=0, description(HTML 或保留可读文本), languageTypes=[1], analysis="",
+  difficulty=3, syncOj=1, examDifficulty, sourceDictList=[], knowledgeArr=[],
+  type=6, audioUrl="", subType(阅读程序1/完善程序2), innerQuestionDetails。
+- innerQuestionDetails 每个小题包含 seq, description, analysis, optionType=4, type, optionDetails。
+
+OJ 编程题 payload：
+- name, contentFormat=1, description, languageTypes=[1], analysis, difficulty=3, syncOj=1,
+  publicFlag=1, examDifficulty=1050, sourceDictList=[], knowledgeArr=[], type=5, audioUrl="",
+  ojInfo(inputType, outputType, example, testData, timeLimit, memoryLimit, contentLimit, caseCount, dataRange, testDataType),
+  referenceCode 可为空字符串。
+
+请特别注意：
+- 输出必须是合法 JSON，不要 Markdown 代码围栏。
+- 不确定就标记待确认，不要补编答案。
+- 数学公式、代码、样例尽量保留原文可读性。
+""".strip()
+
+
 @dataclass(frozen=True)
 class Config:
     host: str
@@ -57,6 +103,10 @@ class Config:
     data_dir: Path
     tyca_mode: str
     tyca_project_dir: Path
+    ai_parser_mode: str
+    deepseek_api_key: str
+    deepseek_base_url: str
+    deepseek_model: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -79,6 +129,10 @@ class Config:
             tyca_project_dir=Path(
                 os.environ.get("TYCA_PROJECT_DIR", os.path.expanduser("~/Downloads/录题助手v5.19.11"))
             ).resolve(),
+            ai_parser_mode=os.environ.get("AI_PARSER_MODE", "deepseek"),
+            deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+            deepseek_base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            deepseek_model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
         )
 
 
@@ -89,10 +143,93 @@ class ApiError(Exception):
         self.message = message
 
 
+class MarkdownParser:
+    def __init__(
+        self,
+        mode: str = "deepseek",
+        api_key: str = "",
+        base_url: str = "https://api.deepseek.com",
+        model: str = "deepseek-v4-flash",
+    ):
+        self.mode = mode
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+
+    @classmethod
+    def from_env(cls) -> "MarkdownParser":
+        return cls(
+            mode=os.environ.get("AI_PARSER_MODE", "deepseek"),
+            api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+            base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        )
+
+    def parse(self, file_name: str, markdown: str) -> dict[str, Any]:
+        if self.mode == "mock":
+            adapter = build_adapter_from_markdown(file_name, markdown)
+            adapter["generatedBy"] = "mock-rule-parser"
+            return adapter
+        if self.mode != "deepseek":
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"unsupported AI_PARSER_MODE: {self.mode}")
+        if not self.api_key:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "服务器未配置 DEEPSEEK_API_KEY，无法使用 AI 解析 Markdown。")
+        return self.parse_with_deepseek(file_name, markdown)
+
+    def parse_with_deepseek(self, file_name: str, markdown: str) -> dict[str, Any]:
+        request_body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": DEEPSEEK_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"文件名：{file_name}\n\n"
+                        "请把下面 Markdown 解析为 TYCA adapter JSON。"
+                        "如果不确定，保留原文并写 generationIssues。\n\n"
+                        f"{markdown}"
+                    ),
+                },
+            ],
+            "temperature": 0.1,
+            "thinking": {"type": "disabled"},
+            "max_tokens": 32768,
+            "response_format": {"type": "json_object"},
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            error_body = sanitize_output(exc.read().decode("utf-8", errors="replace"), limit=2000)
+            raise ApiError(HTTPStatus.BAD_GATEWAY, f"DeepSeek 解析失败：HTTP {exc.code} {error_body}")
+        except Exception as exc:
+            raise ApiError(HTTPStatus.BAD_GATEWAY, f"DeepSeek 解析失败：{exc}")
+
+        content = (
+            payload.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+        adapter = parse_json_object(content)
+        adapter["generatedBy"] = adapter.get("generatedBy") or "deepseek-ai-parser"
+        validate_adapter_shape(adapter)
+        return adapter
+
+
 class Store:
-    def __init__(self, db_path: Path, app_secret: str):
+    def __init__(self, db_path: Path, app_secret: str, parser: "MarkdownParser | None" = None):
         self.db_path = db_path
         self.app_secret = app_secret.encode("utf-8")
+        self.parser = parser or MarkdownParser.from_env()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.init_db()
 
@@ -285,7 +422,7 @@ class Store:
             raise ApiError(HTTPStatus.BAD_REQUEST, "only .md files are accepted in MVP")
         if len(markdown.strip()) < 10:
             raise ApiError(HTTPStatus.BAD_REQUEST, "markdown is too short")
-        adapter = build_adapter_from_markdown(file_name, markdown)
+        adapter = self.parser.parse(file_name, markdown)
         review = review_from_adapter(adapter)
         validation = validate_adapter_for_ui(adapter)
         created = now()
@@ -851,6 +988,27 @@ def safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def parse_json_object(content: str) -> dict[str, Any]:
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise ApiError(HTTPStatus.BAD_GATEWAY, "AI 未返回合法 JSON 对象")
+        try:
+            parsed = json.loads(text[start:end + 1])
+        except json.JSONDecodeError as exc:
+            raise ApiError(HTTPStatus.BAD_GATEWAY, f"AI 返回 JSON 无法解析：{exc}")
+    if not isinstance(parsed, dict):
+        raise ApiError(HTTPStatus.BAD_GATEWAY, "AI 返回结果不是 JSON 对象")
+    return parsed
+
+
 def build_adapter_from_markdown(file_name: str, markdown: str) -> dict[str, Any]:
     items = []
     sections = split_named_sections(markdown)
@@ -1284,6 +1442,7 @@ def sanitize_filename(value: str) -> str:
 
 def sanitize_output(value: str, limit: int = 12000) -> str:
     redacted = COOKIE_ASSIGNMENT_RE.sub(r"\1\2<hidden>", value or "")
+    redacted = SECRET_VALUE_RE.sub("<hidden-api-key>", redacted)
     return redacted[-limit:]
 
 
@@ -1504,7 +1663,13 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 
 def create_server(config: Config) -> ThreadingHTTPServer:
-    store = Store(config.data_dir / "app.db", config.app_secret)
+    parser = MarkdownParser(
+        mode=config.ai_parser_mode,
+        api_key=config.deepseek_api_key,
+        base_url=config.deepseek_base_url,
+        model=config.deepseek_model,
+    )
+    store = Store(config.data_dir / "app.db", config.app_secret, parser)
     handler = ApiHandler
     handler.store = store
     handler.config = config

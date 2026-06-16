@@ -14,6 +14,7 @@ os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="tyca-mvp-")
 os.environ["HOST"] = "127.0.0.1"
 os.environ["PORT"] = "8877"
 os.environ["CORS_ORIGINS"] = "null"
+os.environ["AI_PARSER_MODE"] = "mock"
 
 from app import Config, Store, create_server  # noqa: E402
 

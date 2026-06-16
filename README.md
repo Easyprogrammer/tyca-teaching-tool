@@ -100,12 +100,13 @@ Dry-run does not create remote questions. Submit still requires the frontend con
 
 Teachers do not upload `tyca-adapter.json` manually. The page shows the generated adapter for preview and correction; saving corrections sends the edited JSON back to the backend for validation and later dry-run/submit.
 
-Current real-mode MVP limitations:
+Markdown parsing is AI-first:
 
-- Choice-question Markdown with `A.`/`B.` style options and answer lines/tables is converted.
-- Reading-program and complete-program sections are converted when the section contains one program code block and answer-marked choice subquestions.
-- OJ programming sections are converted when they contain `题目描述`、`输入描述`、`输出描述`、`样例输入`、`样例输出` headings.
-- The Markdown parser is intentionally conservative and is not a replacement for the full question assistant AI recognition pipeline. Ambiguous PDFs/images/Word files should still go through the full question assistant recognition and human preview.
+- Production should use `AI_PARSER_MODE=deepseek`.
+- Configure `DEEPSEEK_API_KEY` on the server only; never commit it.
+- The AI parser must preserve uncertain content and mark it in `generationIssues`.
+- Teachers still review and edit the generated adapter before dry-run and submit.
+- `AI_PARSER_MODE=mock` is only for local smoke tests and uses the old conservative rule parser.
 
 ## Current API Surface
 

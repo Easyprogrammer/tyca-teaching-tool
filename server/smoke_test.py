@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+import re
 
 os.environ["APP_SECRET"] = "test-secret-value-for-smoke"
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="tyca-mvp-")
@@ -16,7 +17,7 @@ os.environ["PORT"] = "8877"
 os.environ["CORS_ORIGINS"] = "null"
 os.environ["AI_PARSER_MODE"] = "mock"
 
-from app import Config, Store, create_server  # noqa: E402
+from app import Config, KNOWLEDGE_FALLBACK_RULES, Store, create_server  # noqa: E402
 
 
 BASE = "http://127.0.0.1:8877"
@@ -46,6 +47,8 @@ def main() -> None:
     time.sleep(0.2)
     try:
         assert request("GET", "/health")["ok"] is True
+        for pattern, _tags in KNOWLEDGE_FALLBACK_RULES:
+            re.compile(pattern, re.I)
         store = server.RequestHandlerClass.store
         teacher = {"id": "smoke", "name": "Smoke Teacher"}
         user = store.find_or_create_teacher_user(teacher, "sessionid=abcdefghijklmnopqrstuvwxyz")
@@ -59,6 +62,8 @@ def main() -> None:
             token,
         )["run"]
         assert run["review"]["items"]
+        assert run["review"]["items"][0]["knowledge"]
+        assert not any("knowledgeArr 为空" in issue for issue in run["review"]["items"][0]["issues"])
         application_run = request(
             "POST",
             "/api/runs",
@@ -85,9 +90,11 @@ def main() -> None:
         )["run"]
         assert application_run["adapter"]
         assert application_run["status"] == "adapter_ready"
-        assert application_run["adapterValidation"]["warnings"]
+        assert not any("knowledgeArr 为空" in warning for warning in application_run["adapterValidation"]["warnings"])
         assert len(application_run["review"]["items"]) == 1
-        assert len(application_run["review"]["items"][0]["issues"]) == 2
+        assert application_run["review"]["items"][0]["knowledge"]
+        assert "位运算" not in application_run["review"]["items"][0]["knowledge"]
+        assert len(application_run["review"]["items"][0]["issues"]) == 1
         assert all("items[" not in issue for issue in application_run["review"]["items"][0]["issues"])
         missing_answer_run = request(
             "POST",
@@ -101,7 +108,6 @@ def main() -> None:
         assert missing_answer_run["review"]["items"][0]["issues"] == [
             "选择题缺少正确答案",
             "选择题第 1 题缺少答案",
-            "knowledgeArr 为空，TYCA 脚本会继续但需要人工确认",
         ]
         dry = request("POST", f"/api/runs/{run['id']}/dry-run", token=token)["run"]
         assert dry["status"] == "dry_run_passed"

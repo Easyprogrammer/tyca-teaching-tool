@@ -125,3 +125,35 @@ KeyError: 'DEEPSEEK_KEY'
 - **Notes**: 改用非回显方式写入服务器环境文件。
 
 ---
+## [ERR-20260616-004] fallback_knowledge_regex
+
+**Logged**: 2026-06-16T12:46:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+新增知识点兜底规则时，多条 raw string 把 `\(`、`\[`、`\s` 写成了双反斜杠，导致正则编译失败，`/api/runs` 返回 500。
+
+### Error
+```text
+re.error: missing ), unterminated subpattern
+```
+
+### Context
+- 触发点是 `infer_knowledge_for_payload` 遍历 `KNOWLEDGE_FALLBACK_RULES`。
+- raw string 中匹配字面量左括号应使用 `r"O\("`，匹配 `\s` 应使用 `r"\s"`。
+- 后续还发现裸 `&` 会误命中 HTML 实体 `&lt;` / `&gt;`，导致普通循环题被误打成位运算。
+
+### Suggested Fix
+修正正则并通过 smoke test 覆盖 `/api/runs` 创建流程。
+
+### Metadata
+- Reproducible: yes
+- Related Files: server/app.py, server/smoke_test.py
+
+### Resolution
+- **Resolved**: 2026-06-16T12:46:00+08:00
+- **Notes**: 已修正所有兜底知识点规则，移除裸 `&` 位运算匹配，并增加 smoke test 编译检查。
+
+---

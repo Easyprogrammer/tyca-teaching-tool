@@ -63,27 +63,32 @@ DEEPSEEK_SYSTEM_PROMPT = """
 
 核心要求：
 - 不要假设 Markdown 格式固定；不同老师可能使用任意标题、答案、解析、表格、列表或混排格式。
-- 只能提取原文中明确出现的信息；答案、解析、知识点不确定时留空，并在 payload.generationIssues 写中文说明。
+- 只能提取原文中明确出现的信息；答案、解析不确定时留空，并在 payload.generationIssues 写中文说明。
+- 程序代码不一定写在 Markdown 代码块里。请根据内容判断代码材料，例如出现 `#include`、`using namespace`、`int main`、函数定义、缩进代码、分号、花括号、`cin`、`cout`、`for/while/if` 等，即使没有 ``` 围栏，也要当作程序代码处理。
+- 阅读程序/完善程序的 payload.description 必须包含识别到的程序材料；若原文没有代码围栏，请把识别到的代码转成 `<pre><code class="language-cpp">...</code></pre>`。
+- 每一道题的 payload.knowledgeArr 必须根据题目内容填写 1-5 个中文知识点标签，可以是多个。标签用简短课程概念，不要写长句。
+- 如果无法判断精确知识点，也要给上位标签，例如：基础语法、输入输出、变量、运算符、条件判断、循环、数组、字符串、函数、递归、结构体、指针、位运算、进制转换、时间复杂度、排序、枚举、模拟、栈、队列、链表、树、二叉树、图论、搜索、动态规划、贪心、二分查找、双指针、前缀和、哈希、组合数学、阅读程序、完善程序、编程题。
 - 如果只能识别题目原文但无法稳定结构化，也要生成一个不可上传的草稿 item，保留原文到 payload.description，并写 generationIssues。
 - 支持 localType: single_choice, multiple_choice, true_false, reading_program, complete_program, programming。
 - targetGroup 映射：选择/判断题 choice，阅读程序/完善程序 application，编程题 oj。
 - 所有 item 必须有 localId、localType、targetGroup、payload。
+- 所有 payload 必须有 knowledgeArr 数组，至少 1 个知识点。
 
 选择题/判断题 payload：
 - name, type(单选1/多选2/判断1), syncOj=1, difficulty=3, examDifficulty, contentFormat=1,
-  languageTypes=[1], audioUrl="", knowledgeArr=[], sourceDictList=[],
+  languageTypes=[1], audioUrl="", knowledgeArr, sourceDictList=[],
   description, analysis, optionsContentType=4, options。
 - options: [{"text": "...", "seq": 0, "isCorrect": true/false, "uuid": "q1-a", "audioUrl": ""}]
 
 阅读程序/完善程序 payload：
 - name, contentFormat=0, description(HTML 或保留可读文本), languageTypes=[1], analysis="",
-  difficulty=3, syncOj=1, examDifficulty, sourceDictList=[], knowledgeArr=[],
+  difficulty=3, syncOj=1, examDifficulty, sourceDictList=[], knowledgeArr,
   type=6, audioUrl="", subType(阅读程序1/完善程序2), innerQuestionDetails。
 - innerQuestionDetails 每个小题包含 seq, description, analysis, optionType=4, type, optionDetails。
 
 OJ 编程题 payload：
 - name, contentFormat=1, description, languageTypes=[1], analysis, difficulty=3, syncOj=1,
-  publicFlag=1, examDifficulty=1050, sourceDictList=[], knowledgeArr=[], type=5, audioUrl="",
+  publicFlag=1, examDifficulty=1050, sourceDictList=[], knowledgeArr, type=5, audioUrl="",
   ojInfo(inputType, outputType, example, testData, timeLimit, memoryLimit, contentLimit, caseCount, dataRange, testDataType),
   referenceCode 可为空字符串。
 
@@ -222,6 +227,7 @@ class MarkdownParser:
         adapter = parse_json_object(content)
         adapter["generatedBy"] = adapter.get("generatedBy") or "deepseek-ai-parser"
         validate_adapter_shape(adapter)
+        ensure_adapter_knowledge(adapter)
         return adapter
 
 
@@ -423,6 +429,7 @@ class Store:
         if len(markdown.strip()) < 10:
             raise ApiError(HTTPStatus.BAD_REQUEST, "markdown is too short")
         adapter = self.parser.parse(file_name, markdown)
+        ensure_adapter_knowledge(adapter)
         review = review_from_adapter(adapter)
         validation = validate_adapter_for_ui(adapter)
         created = now()
@@ -449,6 +456,7 @@ class Store:
 
     def create_adapter_run(self, user_id: int, file_name: str, adapter: dict[str, Any]) -> dict[str, Any]:
         validate_adapter_shape(adapter)
+        ensure_adapter_knowledge(adapter)
         review = review_from_adapter(adapter)
         validation = validate_adapter_for_ui(adapter)
         created = now()
@@ -475,6 +483,7 @@ class Store:
 
     def update_run_adapter(self, user_id: int, run_id: int, adapter: dict[str, Any]) -> dict[str, Any]:
         validate_adapter_shape(adapter)
+        ensure_adapter_knowledge(adapter)
         review = review_from_adapter(adapter)
         validation = validate_adapter_for_ui(adapter)
         with self.connect() as conn:
@@ -839,6 +848,79 @@ def default_exam_difficulty(item_type: str) -> str:
         "complete_program": "1040",
         "programming": "1050",
     }.get(item_type, "1040")
+
+
+KNOWLEDGE_FALLBACK_RULES: list[tuple[str, list[str]]] = [
+    (r"二分|折半", ["二分查找"]),
+    (r"双指针|尺取", ["双指针"]),
+    (r"前缀和|区间和", ["前缀和"]),
+    (r"递归|函数调用|子问题", ["递归", "函数"]),
+    (r"动态规划|dp|状态转移", ["动态规划"]),
+    (r"贪心", ["贪心"]),
+    (r"搜索|dfs|bfs|回溯", ["搜索"]),
+    (r"图|顶点|边|邻接", ["图论"]),
+    (r"二叉树|遍历|先序|中序|后序|树", ["树", "二叉树"]),
+    (r"栈|后缀表达式|出栈|入栈", ["栈"]),
+    (r"队列", ["队列"]),
+    (r"链表|next|指针", ["链表", "指针"]),
+    (r"排序", ["排序"]),
+    (r"哈希|散列", ["哈希"]),
+    (r"组合|排列|盒子|小球|C\(|方案数", ["组合数学"]),
+    (r"位运算|按位|二进制|0b[01]+|异或", ["位运算", "进制转换"]),
+    (r"时间复杂度|O\(", ["时间复杂度"]),
+    (r"数组|a\[|二维数组", ["数组"]),
+    (r"字符串|string|字符", ["字符串"]),
+    (r"循环|for\s*\(|while\s*\(", ["循环"]),
+    (r"if\s*\(|条件", ["条件判断"]),
+    (r"输入|输出|cin|cout", ["输入输出"]),
+]
+
+
+def ensure_adapter_knowledge(adapter: dict[str, Any]) -> None:
+    for item in adapter.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else None
+        if not payload or clean_knowledge(payload.get("knowledgeArr")):
+            continue
+        payload["knowledgeArr"] = infer_knowledge_for_payload(payload, str(item.get("localType") or ""))
+
+
+def infer_knowledge_for_payload(payload: dict[str, Any], local_type: str) -> list[str]:
+    text_parts = [
+        str(payload.get("name") or ""),
+        str(payload.get("description") or ""),
+        str(payload.get("analysis") or ""),
+    ]
+    for option in payload.get("options") or []:
+        if isinstance(option, dict):
+            text_parts.append(str(option.get("text") or ""))
+    for question in payload.get("innerQuestionDetails") or []:
+        if not isinstance(question, dict):
+            continue
+        text_parts.append(str(question.get("description") or ""))
+        text_parts.append(str(question.get("analysis") or ""))
+        for option in question.get("optionDetails") or []:
+            if isinstance(option, dict):
+                text_parts.append(str(option.get("text") or ""))
+    oj_info = payload.get("ojInfo") if isinstance(payload.get("ojInfo"), dict) else {}
+    text_parts.extend(str(oj_info.get(key) or "") for key in ["inputType", "outputType", "dataRange"])
+    text = "\n".join(text_parts)
+
+    tags: list[str] = []
+    for pattern, values in KNOWLEDGE_FALLBACK_RULES:
+        if re.search(pattern, text, flags=re.I):
+            for value in values:
+                if value not in tags:
+                    tags.append(value)
+                if len(tags) >= 5:
+                    return tags
+    fallback = {
+        "reading_program": "阅读程序",
+        "complete_program": "完善程序",
+        "programming": "编程题",
+    }.get(local_type, "基础语法")
+    return tags or [fallback]
 
 
 def validate_adapter_shape(adapter: dict[str, Any]) -> None:

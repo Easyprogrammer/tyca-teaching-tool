@@ -33,9 +33,13 @@
       </section>
 
       <section class="panel wide">
-        <h2>Adapter 预览修正</h2>
+        <h2>TYCA 页面预览</h2>
         <p class="hint" id="adapterStatus">上传 Markdown 后，服务器会自动生成 tyca-adapter.json。</p>
-        <textarea id="adapterEditor" data-testid="adapter-editor" rows="16" spellcheck="false"></textarea>
+        <div id="tycaPreview" class="tyca-preview-empty">上传 Markdown 后在这里预览 TYCA 页面效果。</div>
+        <details class="adapter-json-panel">
+          <summary>查看 / 编辑 tyca-adapter.json</summary>
+          <textarea id="adapterEditor" data-testid="adapter-editor" rows="16" spellcheck="false"></textarea>
+        </details>
         <div class="actions">
           <button id="saveAdapterBtn" data-testid="save-adapter">保存修正</button>
         </div>

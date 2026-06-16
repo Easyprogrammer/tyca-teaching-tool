@@ -1,6 +1,7 @@
 [Unit]
 Description=TYCA Teaching Tool Backend
-After=network.target
+Wants=network-online.target vpn-codemao.service
+After=network-online.target vpn-codemao.service
 
 [Service]
 Type=simple
@@ -8,6 +9,7 @@ User=tyca-tool
 Group=tyca-tool
 WorkingDirectory=/opt/tyca-tool/app
 EnvironmentFile=/opt/tyca-tool/server.env
+ExecStartPre=/usr/sbin/ip link show tun0
 ExecStart=/usr/bin/python3.11 /opt/tyca-tool/app/server/app.py
 Restart=always
 RestartSec=3

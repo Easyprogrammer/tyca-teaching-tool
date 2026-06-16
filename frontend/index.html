@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TYCA 录题助手</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Teaching Tools</div>
+        <h1>TYCA 录题助手</h1>
+      </div>
+      <div class="status" id="sessionStatus">未登录</div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <h2>连接</h2>
+        <label>
+          API 地址
+        <input id="apiBase" data-testid="api-base" value="http://127.0.0.1:8787" />
+        </label>
+        <label>
+          邮箱
+        <input id="email" data-testid="email" placeholder="teacher@example.com" autocomplete="username" />
+        </label>
+        <label>
+          密码
+        <input id="password" data-testid="password" type="password" autocomplete="current-password" />
+        </label>
+        <button id="loginBtn" data-testid="login">登录</button>
+      </section>
+
+      <section class="panel">
+        <h2>TYCA Cookie</h2>
+        <p class="hint" id="cookieStatus">登录后查看 cookie 状态。</p>
+        <label>
+          粘贴自己的 TYCA cookie
+          <textarea id="cookieInput" data-testid="cookie-input" rows="5" placeholder="cookie 只会提交到后端，不会回显"></textarea>
+        </label>
+        <button id="saveCookieBtn" data-testid="save-cookie">更新 Cookie</button>
+      </section>
+
+      <section class="panel wide">
+        <h2>上传 Markdown</h2>
+        <div class="upload-row">
+          <input id="mdFile" data-testid="md-file" type="file" accept=".md,text/markdown,text/plain" />
+          <button id="uploadBtn" data-testid="upload-md">生成 Adapter 和审查表</button>
+        </div>
+        <div id="review"></div>
+      </section>
+
+      <section class="panel wide">
+        <h2>Adapter 预览修正</h2>
+        <p class="hint" id="adapterStatus">上传 Markdown 后，服务器会自动生成 tyca-adapter.json。</p>
+        <textarea id="adapterEditor" data-testid="adapter-editor" rows="16" spellcheck="false"></textarea>
+        <div class="actions">
+          <button id="saveAdapterBtn" data-testid="save-adapter">保存修正</button>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <h2>上传动作</h2>
+        <div class="actions">
+          <button id="dryRunBtn" data-testid="dry-run">预演上传</button>
+          <button id="submitBtn" data-testid="submit-run" class="danger">确认正式上传</button>
+        </div>
+        <pre id="resultBox"></pre>
+      </section>
+
+      <section class="panel wide">
+        <h2>历史</h2>
+        <button id="refreshHistoryBtn" data-testid="refresh-history">刷新历史</button>
+        <div id="history"></div>
+      </section>
+    </main>
+
+    <script src="./config.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

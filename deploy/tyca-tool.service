@@ -1,0 +1,21 @@
+[Unit]
+Description=TYCA Teaching Tool Backend
+After=network.target
+
+[Service]
+Type=simple
+User=tyca-tool
+Group=tyca-tool
+WorkingDirectory=/opt/tyca-tool/app
+EnvironmentFile=/opt/tyca-tool/server.env
+ExecStart=/usr/bin/python3 /opt/tyca-tool/app/server/app.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/tyca-tool/data /opt/tyca-tool/app/server/data /opt/tyca-tool/录题助手v5.19.11
+
+[Install]
+WantedBy=multi-user.target

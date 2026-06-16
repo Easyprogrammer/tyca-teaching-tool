@@ -1163,6 +1163,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             if method == "GET" and path == "/health":
                 self.send_json({"ok": True, "mode": self.config.tyca_mode})
                 return
+            if method == "GET" and not path.startswith("/api/"):
+                self.serve_frontend(path)
+                return
             if method == "POST" and path == "/api/login":
                 body = self.read_json()
                 self.send_json(self.store.create_session(str(body.get("email", "")), str(body.get("password", ""))))
@@ -1221,6 +1224,24 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.send_json({"error": exc.message}, exc.status)
         except Exception:
             self.send_json({"error": "internal server error"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def serve_frontend(self, path: str) -> None:
+        frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+        relative = "index.html" if path in {"", "/"} else path.lstrip("/")
+        target = (frontend_dir / relative).resolve()
+        if not str(target).startswith(str(frontend_dir.resolve())) or not target.exists() or not target.is_file():
+            target = frontend_dir / "index.html"
+        content_type = {
+            ".html": "text/html; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+        }.get(target.suffix, "application/octet-stream")
+        body = target.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def read_json(self, max_bytes: int = 64 * 1024) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))

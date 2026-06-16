@@ -1,8 +1,6 @@
 const state = {
   token: localStorage.getItem("tyca_token") || "",
   currentRun: null,
-  qrToken: "",
-  qrTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -37,89 +35,12 @@ function setSession(text) {
   $("sessionStatus").textContent = text;
 }
 
-async function startQrLogin() {
-  stopQrPolling();
-  $("qrStatus").textContent = "正在生成钉钉二维码...";
-  $("startQrLoginBtn").disabled = true;
-  const payload = await api("/api/qrcode-login/start", { method: "POST" });
-  state.qrToken = payload.qrcodeToken;
-  $("qrBox").innerHTML = `<img alt="钉钉登录二维码" src="data:image/png;base64,${payload.qrcode}" />`;
-  $("qrStatus").textContent = "请用钉钉扫码确认登录。";
-  $("cancelQrLoginBtn").disabled = false;
-  state.qrTimer = window.setInterval(checkQrLogin, 1200);
-}
-
-async function checkQrLogin() {
-  if (!state.qrToken) return;
-  const payload = await api(`/api/qrcode-login/status?token=${encodeURIComponent(state.qrToken)}`);
-  if (payload.status === "pending") {
-    $("qrStatus").textContent = "等待扫码确认...";
-    return;
-  }
-  if (payload.status === "done") {
-    stopQrPolling();
-    state.qrToken = "";
-    $("startQrLoginBtn").disabled = false;
-    $("cancelQrLoginBtn").disabled = true;
-    $("qrStatus").textContent = `登录成功：${payload.teacher?.name || payload.user.email}`;
-    $("qrBox").innerHTML = "<span>已登录</span>";
-    finishLogin(payload);
-    return;
-  }
-  stopQrPolling();
-  $("startQrLoginBtn").disabled = false;
-  $("cancelQrLoginBtn").disabled = true;
-  $("qrStatus").textContent = payload.error || "二维码已失效，请重新扫码。";
-}
-
-async function cancelQrLogin() {
-  if (state.qrToken) {
-    await api("/api/qrcode-login/cancel", {
-      method: "POST",
-      body: JSON.stringify({ token: state.qrToken }),
-    });
-  }
-  stopQrPolling();
-  state.qrToken = "";
-  $("qrBox").innerHTML = "<span>未生成二维码</span>";
-  $("qrStatus").textContent = "已取消扫码登录。";
-  $("startQrLoginBtn").disabled = false;
-  $("cancelQrLoginBtn").disabled = true;
-}
-
-function stopQrPolling() {
-  if (state.qrTimer) {
-    window.clearInterval(state.qrTimer);
-    state.qrTimer = null;
-  }
-}
-
-async function finishLogin(payload) {
-  state.token = payload.token;
-  localStorage.setItem("tyca_token", state.token);
-  setSession(`已登录：${payload.teacher?.name || payload.user.email}`);
-  await loadMe();
-  await loadHistory();
-}
-
 async function loadMe() {
   const payload = await api("/api/me");
   setSession(`已登录：${payload.user.email}`);
-  $("cookieStatus").textContent = payload.cookie.hasCookie
-    ? `已配置 Cookie，更新时间：${formatTime(payload.cookie.updatedAt)}`
-    : "尚未配置 TYCA Cookie。";
-}
-
-async function saveCookie() {
-  const cookie = $("cookieInput").value.trim();
-  if (!cookie) throw new Error("请先粘贴 cookie。");
-  const payload = await api("/api/me/tyca-cookie", {
-    method: "POST",
-    body: JSON.stringify({ cookie }),
-  });
-  $("cookieInput").value = "";
-  $("cookieStatus").textContent = `已配置 Cookie，更新时间：${formatTime(payload.cookie.updatedAt)}`;
-  showResult({ ok: true, message: "Cookie 已更新，前端不会回显原文。" });
+  if (!payload.cookie.hasCookie) {
+    showResult({ ok: false, error: "当前账号没有可用 Cookie，请重新扫码登录。" });
+  }
 }
 
 async function uploadMarkdown() {
@@ -287,21 +208,23 @@ function bind(id, handler) {
   });
 }
 
-bind("startQrLoginBtn", startQrLogin);
-bind("cancelQrLoginBtn", cancelQrLogin);
-bind("saveCookieBtn", saveCookie);
 bind("uploadBtn", uploadMarkdown);
 bind("saveAdapterBtn", saveAdapter);
 bind("dryRunBtn", dryRun);
 bind("submitBtn", submitRun);
 bind("refreshHistoryBtn", loadHistory);
+bind("logoutBtn", () => {
+  localStorage.removeItem("tyca_token");
+  window.location.href = "./login.html";
+});
 
 applyRuntimeConfig();
 
-if (state.token) {
+if (!state.token) {
+  window.location.href = "./login.html";
+} else {
   loadMe().then(loadHistory).catch(() => {
     localStorage.removeItem("tyca_token");
-    state.token = "";
-    setSession("未登录");
+    window.location.href = "./login.html";
   });
 }

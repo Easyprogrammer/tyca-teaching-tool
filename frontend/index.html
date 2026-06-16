@@ -12,38 +12,15 @@
         <div class="eyebrow">Teaching Tools</div>
         <h1>TYCA 录题助手</h1>
       </div>
-      <div class="status" id="sessionStatus">未登录</div>
+      <div class="top-actions">
+        <div class="status" id="sessionStatus">未登录</div>
+        <button id="logoutBtn" class="secondary">重新登录</button>
+      </div>
     </header>
 
+    <input id="apiBase" type="hidden" value="http://127.0.0.1:8787" />
+
     <main class="layout">
-      <section class="panel">
-        <h2>连接</h2>
-        <label>
-          API 地址
-        <input id="apiBase" data-testid="api-base" value="http://127.0.0.1:8787" />
-        </label>
-        <div class="qr-login">
-          <div class="qr-box" id="qrBox">
-            <span>未生成二维码</span>
-          </div>
-          <p class="hint" id="qrStatus">使用钉钉扫码登录后，服务器会自动保存本教师的 TYCA Cookie。</p>
-          <div class="actions">
-            <button id="startQrLoginBtn" data-testid="start-qr-login">钉钉扫码登录</button>
-            <button id="cancelQrLoginBtn" data-testid="cancel-qr-login" class="secondary" disabled>取消</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2>TYCA Cookie</h2>
-        <p class="hint" id="cookieStatus">登录后查看 cookie 状态。</p>
-        <label>
-          粘贴自己的 TYCA cookie
-          <textarea id="cookieInput" data-testid="cookie-input" rows="5" placeholder="cookie 只会提交到后端，不会回显"></textarea>
-        </label>
-        <button id="saveCookieBtn" data-testid="save-cookie">更新 Cookie</button>
-      </section>
-
       <section class="panel wide">
         <h2>上传 Markdown</h2>
         <div class="upload-row">

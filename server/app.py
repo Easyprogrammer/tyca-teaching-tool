@@ -56,8 +56,6 @@ class Config:
     data_dir: Path
     tyca_mode: str
     tyca_project_dir: Path
-    demo_email: str
-    demo_password: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -80,8 +78,6 @@ class Config:
             tyca_project_dir=Path(
                 os.environ.get("TYCA_PROJECT_DIR", os.path.expanduser("~/Downloads/录题助手v5.19.11"))
             ).resolve(),
-            demo_email=os.environ.get("DEMO_EMAIL", "teacher@example.com"),
-            demo_password=os.environ.get("DEMO_PASSWORD", "change-me"),
         )
 
 
@@ -150,30 +146,10 @@ class Store:
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
-    def ensure_demo_user(self, email: str, password: str) -> None:
-        with self.connect() as conn:
-            row = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-            if row:
-                return
-            conn.execute(
-                "INSERT INTO users(email, password_hash, created_at) VALUES (?, ?, ?)",
-                (email, self.hash_password(password), now()),
-            )
-
     def hash_password(self, password: str) -> str:
         salt = secrets.token_hex(16)
         digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
         return f"pbkdf2_sha256${salt}${base64.b64encode(digest).decode('ascii')}"
-
-    def verify_password(self, password: str, stored: str) -> bool:
-        try:
-            method, salt, digest_b64 = stored.split("$", 2)
-        except ValueError:
-            return False
-        if method != "pbkdf2_sha256":
-            return False
-        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
-        return hmac.compare_digest(base64.b64encode(digest).decode("ascii"), digest_b64)
 
     def sign(self, payload: bytes) -> str:
         return hmac.new(self.app_secret, payload, hashlib.sha256).hexdigest()
@@ -224,19 +200,6 @@ class Store:
             output += block
             counter += 1
         return output[:length]
-
-    def create_session(self, email: str, password: str) -> dict[str, Any]:
-        with self.connect() as conn:
-            row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-            if not row or not self.verify_password(password, row["password_hash"]):
-                raise ApiError(HTTPStatus.UNAUTHORIZED, "email or password is incorrect")
-            token = secrets.token_urlsafe(32)
-            created = now()
-            conn.execute(
-                "INSERT INTO sessions(token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-                (hash_token(token), row["id"], created, created + 86400 * 7),
-            )
-            return {"token": token, "user": public_user(row)}
 
     def create_session_for_user(self, user_id: int) -> str:
         token = secrets.token_urlsafe(32)
@@ -1343,10 +1306,6 @@ class ApiHandler(BaseHTTPRequestHandler):
             if method == "GET" and not path.startswith("/api/"):
                 self.serve_frontend(path)
                 return
-            if method == "POST" and path == "/api/login":
-                body = self.read_json()
-                self.send_json(self.store.create_session(str(body.get("email", "")), str(body.get("password", ""))))
-                return
             if method == "POST" and path == "/api/qrcode-login/start":
                 self.send_json(self.qrcode.start())
                 return
@@ -1362,11 +1321,6 @@ class ApiHandler(BaseHTTPRequestHandler):
             user = self.store.auth_user(self.bearer_token())
             if method == "GET" and path == "/api/me":
                 self.send_json({"user": public_user(user), "cookie": self.store.get_cookie_status(user["id"])})
-                return
-            if method == "POST" and path == "/api/me/tyca-cookie":
-                body = self.read_json()
-                self.store.update_cookie(user["id"], str(body.get("cookie", "")))
-                self.send_json({"ok": True, "cookie": self.store.get_cookie_status(user["id"])})
                 return
             if method == "GET" and path == "/api/runs":
                 self.send_json({"runs": self.store.list_runs(user["id"])})
@@ -1469,7 +1423,6 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 def create_server(config: Config) -> ThreadingHTTPServer:
     store = Store(config.data_dir / "app.db", config.app_secret)
-    store.ensure_demo_user(config.demo_email, config.demo_password)
     handler = ApiHandler
     handler.store = store
     handler.config = config

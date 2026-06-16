@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>登录 - TYCA 录题助手</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="login-page">
+    <main class="login-shell">
+      <section class="panel login-panel">
+        <div class="eyebrow">Teaching Tools</div>
+        <h1>TYCA 录题助手</h1>
+        <input id="apiBase" type="hidden" value="http://127.0.0.1:8787" />
+        <div class="qr-login">
+          <div class="qr-box" id="qrBox">
+            <span>未生成二维码</span>
+          </div>
+          <p class="hint" id="qrStatus">使用钉钉扫码登录，服务器会自动更新本教师的 TYCA Cookie。</p>
+          <div class="actions">
+            <button id="startQrLoginBtn" data-testid="start-qr-login">钉钉扫码登录</button>
+            <button id="cancelQrLoginBtn" data-testid="cancel-qr-login" class="secondary" disabled>取消</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./config.js"></script>
+    <script src="./login.js"></script>
+  </body>
+</html>

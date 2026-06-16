@@ -45,11 +45,12 @@ def main() -> None:
     time.sleep(0.2)
     try:
         assert request("GET", "/health")["ok"] is True
-        login = request("POST", "/api/login", {"email": "teacher@example.com", "password": "change-me"})
-        token = login["token"]
+        store = server.RequestHandlerClass.store
+        teacher = {"id": "smoke", "name": "Smoke Teacher"}
+        user = store.find_or_create_teacher_user(teacher, "sessionid=abcdefghijklmnopqrstuvwxyz")
+        token = store.create_session_for_user(user["id"])
         me = request("GET", "/api/me", token=token)
-        assert me["cookie"]["hasCookie"] is False
-        request("POST", "/api/me/tyca-cookie", {"cookie": "sessionid=abcdefghijklmnopqrstuvwxyz"}, token)
+        assert me["cookie"]["hasCookie"] is True
         run = request(
             "POST",
             "/api/runs",

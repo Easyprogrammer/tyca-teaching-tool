@@ -51,6 +51,37 @@ h2 {
   padding: 8px 12px;
 }
 
+.top-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.top-actions button {
+  min-height: 36px;
+}
+
+.login-page {
+  background: #eef2f7;
+}
+
+.login-shell {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-panel {
+  max-width: 380px;
+  width: 100%;
+}
+
+.login-panel h1 {
+  margin-bottom: 20px;
+}
+
 .layout {
   display: grid;
   gap: 16px;
@@ -199,6 +230,7 @@ pre {
 
 @media (max-width: 760px) {
   .topbar,
+  .top-actions,
   .upload-row,
   .actions {
     align-items: stretch;

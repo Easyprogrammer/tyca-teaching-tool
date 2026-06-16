@@ -153,6 +153,27 @@ button:disabled {
   margin: 0 0 12px;
 }
 
+.status-line {
+  border-left: 3px solid #cbd5e1;
+  margin: 12px 0 0;
+  padding-left: 10px;
+}
+
+.status-line.working {
+  border-color: #2563eb;
+  color: #1d4ed8;
+}
+
+.status-line.success {
+  border-color: #16a34a;
+  color: #15803d;
+}
+
+.status-line.error {
+  border-color: #dc2626;
+  color: #b91c1c;
+}
+
 .qr-login {
   display: grid;
   gap: 12px;

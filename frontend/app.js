@@ -35,6 +35,13 @@ function setSession(text) {
   $("sessionStatus").textContent = text;
 }
 
+function setUploadStatus(text, kind = "muted") {
+  const element = $("uploadStatus");
+  if (!element) return;
+  element.textContent = text;
+  element.className = `hint status-line ${kind}`;
+}
+
 async function loadMe() {
   const payload = await api("/api/me");
   setSession(`已登录：${payload.user.email}`);
@@ -46,6 +53,7 @@ async function loadMe() {
 async function uploadMarkdown() {
   const file = $("mdFile").files[0];
   if (!file) throw new Error("请选择 .md 文件。");
+  setUploadStatus("正在读取 Markdown 并生成 adapter...", "working");
   const markdown = await file.text();
   const payload = await api("/api/runs", {
     method: "POST",
@@ -54,6 +62,13 @@ async function uploadMarkdown() {
   state.currentRun = payload.run;
   renderReview(payload.run);
   renderAdapter(payload.run);
+  const validation = payload.run.adapterValidation || {};
+  if (validation.ok) {
+    setUploadStatus(`已生成 Run #${payload.run.id}，可以先预演上传。`, "success");
+  } else {
+    const errors = validation.errors || [];
+    setUploadStatus(`已生成 Run #${payload.run.id}，但有 ${errors.length} 个阻断问题，请按审查表修正。`, "error");
+  }
   showResult({ runId: payload.run.id, status: payload.run.status, adapterGenerated: Boolean(payload.run.adapter) });
   await loadHistory();
 }
@@ -199,11 +214,21 @@ function escapeHtml(value) {
 }
 
 function bind(id, handler) {
-  $(id).addEventListener("click", async () => {
+  const button = $(id);
+  button.addEventListener("click", async () => {
+    const previousText = button.textContent;
     try {
+      button.disabled = true;
+      if (id === "uploadBtn") button.textContent = "生成中...";
       await handler();
     } catch (error) {
       showResult({ ok: false, error: error.message });
+      if (id === "uploadBtn") {
+        setUploadStatus(`生成失败：${error.message}`, "error");
+      }
+    } finally {
+      button.disabled = false;
+      button.textContent = previousText;
     }
   });
 }

@@ -399,6 +399,13 @@ class TycaClient:
 
     def dry_run(self, cookie: str, run: dict[str, Any]) -> dict[str, Any]:
         self.assert_cookie(cookie)
+        validation = run.get("adapterValidation") or {}
+        if validation and not validation.get("ok"):
+            errors = validation.get("errors") or []
+            message = "Adapter 存在阻断问题，请先在预览区修正后再预演。"
+            if errors:
+                message += " " + "；".join(str(item) for item in errors[:3])
+            raise ApiError(HTTPStatus.BAD_REQUEST, message)
         review = run["review"]
         warnings = list(review.get("warnings", []))
         if self.mode == "real":
@@ -756,8 +763,17 @@ def validate_adapter_for_ui(adapter: dict[str, Any]) -> dict[str, Any]:
             warnings.append(f"{label} knowledgeArr 为空，TYCA 脚本会继续但需要人工确认")
         if target_group == "choice" and len(payload.get("options") or []) < 2:
             errors.append(f"{label} 选择题至少需要 2 个选项")
-        if target_group == "application" and not payload.get("innerQuestionDetails"):
-            errors.append(f"{label} 应用题缺少 innerQuestionDetails")
+        if target_group == "application":
+            if not payload.get("innerQuestionDetails"):
+                errors.append(f"{label} 应用题缺少 innerQuestionDetails")
+            if not str(payload.get("description") or "").strip():
+                errors.append(f"{label} 应用题缺少程序材料")
+            for issue in payload.get("generationIssues") or []:
+                issue_text = str(issue)
+                if "缺少" in issue_text or "未识别" in issue_text:
+                    errors.append(f"{label} {issue_text}")
+                else:
+                    warnings.append(f"{label} {issue_text}")
         if target_group == "oj":
             oj_info = payload.get("ojInfo") if isinstance(payload.get("ojInfo"), dict) else {}
             if not oj_info.get("inputType") or not oj_info.get("outputType") or not oj_info.get("example"):
@@ -971,8 +987,13 @@ def build_application_items(section_text: str, local_type: str, offset: int) -> 
     items = []
     for block_index, block in enumerate(blocks, start=1):
         material = extract_material(block["text"])
+        issues = []
         if not material:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"{block['title']} 缺少程序代码块/材料")
+            material = infer_application_material(block["text"])
+            if material:
+                issues.append(f"{block['title']} 未发现 Markdown 代码块，已按普通程序材料兜底识别；请检查行号和代码显示。")
+            else:
+                issues.append(f"{block['title']} 缺少程序代码块/材料")
         sub_blocks = split_question_blocks(block["text"])
         sub_questions = []
         for sub_index, sub in enumerate(sub_blocks, start=1):
@@ -983,7 +1004,8 @@ def build_application_items(section_text: str, local_type: str, offset: int) -> 
                 continue
             answer = normalize_answer(extract_inline_answer(sub["text"]))
             if not answer:
-                raise ApiError(HTTPStatus.BAD_REQUEST, f"{block['title']} 第 {sub_index} 小题缺少答案")
+                issues.append(f"{block['title']} 第 {sub_index} 小题缺少答案")
+                continue
             sub_questions.append(
                 {
                     "seq": len(sub_questions),
@@ -998,7 +1020,7 @@ def build_application_items(section_text: str, local_type: str, offset: int) -> 
                 }
             )
         if not sub_questions:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"{block['title']} 未识别到小题选项")
+            issues.append(f"{block['title']} 未识别到小题选项")
         payload = {
             "name": clean_title(block["title"]),
             "contentFormat": 0,
@@ -1014,6 +1036,7 @@ def build_application_items(section_text: str, local_type: str, offset: int) -> 
             "audioUrl": "",
             "subType": 1 if local_type == "reading_program" else 2,
             "innerQuestionDetails": sub_questions,
+            "generationIssues": issues,
         }
         items.append({"localId": f"q{offset + block_index}", "localType": local_type, "targetGroup": "application", "payload": payload})
     return items
@@ -1032,6 +1055,52 @@ def strip_code_fences_for_heading_scan(text: str) -> str:
 def extract_material(text: str) -> str:
     match = re.search(r"```[A-Za-z0-9_+-]*\n[\s\S]*?\n```", text)
     return match.group(0) if match else ""
+
+
+def infer_application_material(text: str) -> str:
+    explicit = extract_markdown_section(text, ["程序", "代码", "程序代码", "阅读程序", "材料"])
+    if explicit:
+        return fenced_or_plain_material(explicit)
+
+    codeish_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            if codeish_lines and codeish_lines[-1] != "":
+                codeish_lines.append("")
+            continue
+        if stripped.startswith("#") or OPTION_RE.match(stripped) or ANSWER_RE.match(stripped):
+            continue
+        if re.match(r"(?i)^(解析|analysis|输入|输出|样例|题目描述)\s*[:：]", stripped):
+            continue
+        if looks_like_code_line(stripped):
+            codeish_lines.append(line)
+
+    while codeish_lines and codeish_lines[0] == "":
+        codeish_lines.pop(0)
+    while codeish_lines and codeish_lines[-1] == "":
+        codeish_lines.pop()
+    if len([line for line in codeish_lines if line.strip()]) >= 3:
+        return "```cpp\n" + "\n".join(codeish_lines) + "\n```"
+    return ""
+
+
+def fenced_or_plain_material(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    if "```" in stripped:
+        return stripped
+    return "```cpp\n" + stripped + "\n```"
+
+
+def looks_like_code_line(line: str) -> bool:
+    if re.search(r"\b(int|long|double|float|char|bool|string|void|for|while|if|else|return|cin|cout|include|using|namespace|main)\b", line):
+        return True
+    if re.search(r"[{};=<>+\-*/%]|//", line) and not re.match(r"^\d+[\.、:)]", line):
+        return True
+    return False
 
 
 def remove_options(text: str) -> str:

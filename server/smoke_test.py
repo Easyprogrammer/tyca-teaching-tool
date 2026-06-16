@@ -58,6 +58,33 @@ def main() -> None:
             token,
         )["run"]
         assert run["review"]["items"]
+        application_run = request(
+            "POST",
+            "/api/runs",
+            {
+                "fileName": "reading.md",
+                "markdown": (
+                    "# 阅读程序\n"
+                    "#### 累加程序\n"
+                    "int main() {\n"
+                    "  int s = 0;\n"
+                    "  for (int i = 1; i <= 3; i++) s += i;\n"
+                    "  cout << s;\n"
+                    "  return 0;\n"
+                    "}\n\n"
+                    "1. 程序输出是多少？\n"
+                    "A. 3\n"
+                    "B. 6\n"
+                    "C. 9\n"
+                    "D. 10\n"
+                    "答案：B\n"
+                ),
+            },
+            token,
+        )["run"]
+        assert application_run["adapter"]
+        assert application_run["status"] == "adapter_ready"
+        assert application_run["adapterValidation"]["warnings"]
         dry = request("POST", f"/api/runs/{run['id']}/dry-run", token=token)["run"]
         assert dry["status"] == "dry_run_passed"
         submitted = request(

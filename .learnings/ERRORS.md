@@ -32,3 +32,34 @@ Create `server/.env` from `server/.env.example` before manual startup, or pass a
 - Related Files: server/app.py, server/.env.example
 
 ---
+## [ERR-20260616-001] smoke_test_assertion
+
+**Logged**: 2026-06-16T12:08:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+新增阅读程序兜底解析 smoke test 时，把有 warning 但无 errors 的 run 状态误判为 `adapter_warning`。
+
+### Error
+```text
+AssertionError at assert application_run["status"] == "adapter_warning"
+```
+
+### Context
+- 后端状态规则是 `adapter_ready` 表示校验无阻断错误，即使存在 warnings。
+- 阅读程序无 fenced code 的兜底解析会生成 warning，但不阻断预览和 adapter 生成。
+
+### Suggested Fix
+测试应断言 `adapter_ready` 且 `adapterValidation.warnings` 非空，覆盖“不再 400，但提示老师检查”的真实行为。
+
+### Metadata
+- Reproducible: yes
+- Related Files: server/smoke_test.py, server/app.py
+
+### Resolution
+- **Resolved**: 2026-06-16T12:08:00+08:00
+- **Notes**: 已修正 smoke test 断言。
+
+---

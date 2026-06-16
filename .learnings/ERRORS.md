@@ -94,3 +94,34 @@ AssertionError at assert application_run["status"] == "adapter_warning"
 - **Notes**: 已添加缺答案选择题 smoke test。
 
 ---
+## [ERR-20260616-003] remote_env_secret_not_passed
+
+**Logged**: 2026-06-16T12:33:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: infra
+
+### Summary
+配置服务器 DeepSeek 环境变量时，本地 shell 变量未传入远端 Python，导致远端读取 `DEEPSEEK_KEY` 失败。
+
+### Error
+```text
+KeyError: 'DEEPSEEK_KEY'
+```
+
+### Context
+- 远端服务仍保持 active，健康检查正常。
+- 修正方式必须避免在输出、代码或仓库中暴露 API key。
+
+### Suggested Fix
+通过 stdin 或远端临时受控脚本写入密钥，执行后只回显健康检查，不打印环境文件内容。
+
+### Metadata
+- Reproducible: yes
+- Related Files: deploy/server.env.example
+
+### Resolution
+- **Resolved**: 2026-06-16T12:33:00+08:00
+- **Notes**: 改用非回显方式写入服务器环境文件。
+
+---

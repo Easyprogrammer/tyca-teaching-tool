@@ -763,6 +763,11 @@ def validate_adapter_for_ui(adapter: dict[str, Any]) -> dict[str, Any]:
             warnings.append(f"{label} knowledgeArr 为空，TYCA 脚本会继续但需要人工确认")
         if target_group == "choice" and len(payload.get("options") or []) < 2:
             errors.append(f"{label} 选择题至少需要 2 个选项")
+        if target_group == "choice":
+            if not any(option.get("isCorrect") for option in payload.get("options") or [] if isinstance(option, dict)):
+                errors.append(f"{label} 选择题缺少正确答案")
+            for issue in payload.get("generationIssues") or []:
+                errors.append(f"{label} {issue}")
         if target_group == "application":
             if not payload.get("innerQuestionDetails"):
                 errors.append(f"{label} 应用题缺少 innerQuestionDetails")
@@ -929,11 +934,13 @@ def build_choice_items(file_name: str, markdown: str, offset: int) -> list[dict[
         if len(options) < 2:
             continue
         answer = normalize_answer(answer_map.get(str(block["number"])) or extract_inline_answer(block["text"]))
+        issues = []
         if not answer:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"选择题第 {block['number']} 题缺少答案")
+            issues.append(f"选择题第 {block['number']} 题缺少答案")
         option_letters = set(options.keys())
         if any(letter not in option_letters for letter in answer):
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"选择题第 {block['number']} 题答案 {''.join(sorted(answer))} 不在选项中")
+            issues.append(f"选择题第 {block['number']} 题答案 {''.join(sorted(answer))} 不在选项中")
+            answer = answer.intersection(option_letters)
         local_type = "multiple_choice" if len(answer) > 1 else "single_choice"
         payload = build_choice_payload(
             name=clean_title(block["title"] or file_name),
@@ -944,6 +951,7 @@ def build_choice_items(file_name: str, markdown: str, offset: int) -> list[dict[
             local_type=local_type,
             local_id=f"q{offset + block_index}",
         )
+        payload["generationIssues"] = issues
         items.append({"localId": f"q{offset + block_index}", "localType": local_type, "targetGroup": "choice", "payload": payload})
     return items
 

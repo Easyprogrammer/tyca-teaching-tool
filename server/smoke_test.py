@@ -85,6 +85,15 @@ def main() -> None:
         assert application_run["adapter"]
         assert application_run["status"] == "adapter_ready"
         assert application_run["adapterValidation"]["warnings"]
+        missing_answer_run = request(
+            "POST",
+            "/api/runs",
+            {"fileName": "missing-answer.md", "markdown": "# 题目1. 缺答案题\nA. 1\nB. 2\n"},
+            token,
+        )["run"]
+        assert missing_answer_run["adapter"]
+        assert missing_answer_run["status"] == "adapter_warning"
+        assert missing_answer_run["adapterValidation"]["errors"]
         dry = request("POST", f"/api/runs/{run['id']}/dry-run", token=token)["run"]
         assert dry["status"] == "dry_run_passed"
         submitted = request(

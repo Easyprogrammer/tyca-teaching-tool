@@ -63,3 +63,34 @@ AssertionError at assert application_run["status"] == "adapter_warning"
 - **Notes**: 已修正 smoke test 断言。
 
 ---
+## [ERR-20260616-002] choice_generation_hard_fail
+
+**Logged**: 2026-06-16T12:12:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+选择题缺答案时 `/api/runs` 仍直接返回 400，导致老师只能看到单个错误，不能进入审查表批量修正。
+
+### Error
+```text
+生成失败：选择题第 1 题缺少答案
+```
+
+### Context
+- 页面反馈已就近显示，但后端生成流程仍把选择题缺答案作为请求级异常。
+- 录题助手的目标是先生成 adapter 和审查表，缺答案应成为 adapterValidation errors，上传前再阻断。
+
+### Suggested Fix
+选择题生成时允许空答案，写入 `generationIssues`；校验阶段把缺正确答案和 generationIssues 转成 errors。
+
+### Metadata
+- Reproducible: yes
+- Related Files: server/app.py, server/smoke_test.py
+
+### Resolution
+- **Resolved**: 2026-06-16T12:12:00+08:00
+- **Notes**: 已添加缺答案选择题 smoke test。
+
+---
